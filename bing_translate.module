@@ -1,0 +1,167 @@
+<?php
+
+function bing_translate_menu(){
+  $items['bing_translate/run'] = array(
+    'page callback' => 'bing_translate_cron',
+    'access callback' => true,
+  );
+
+  $items['admin/config/system/bing_translate'] = array(
+    'title' => t('Bing Translate'),
+    'description' => t('Configure translation'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('bing_translate_admin_settings'),
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+function bing_translate_cron(){
+  require_once('vendor/curl_wrapper/curl.php');
+  require_once('vendor/microsoft/translator.php');
+  //ACCOUNT_KEY you have to get from https://datamarket.azure.com/dataset/1899a118-d202-492c-aa16-ba21c33c06cb
+
+  for($i = 1; $i <= variable_get('bing_translate_translations_per_call', 10); $i++){
+    try {
+      //Client ID of the application.
+      $clientID       = variable_get('AZURE_SECRET','Sitely');
+      //Client Secret key of the application.
+      $clientSecret = variable_get('AZURE_SECRET','YJ0nM8fO3W+ivcSIaqmZmBt47iEsf5P9QY583KKenfk=');
+      //OAuth Url.
+      $authUrl      = "https://datamarket.accesscontrol.windows.net/v2/OAuth2-13/";
+      //Application Scope Url
+      $scopeUrl     = "http://api.microsofttranslator.com";
+      //Application grant type
+      $grantType    = "client_credentials";
+
+      //Create the AccessTokenAuthentication object.
+      $authObj      = new AccessTokenAuthentication();
+      //Get the Access token.
+      $accessToken  = $authObj->getTokens($grantType, $scopeUrl, $clientID, $clientSecret, $authUrl);
+      //Create the authorization Header string.
+      $authHeader = "Authorization: Bearer ". $accessToken;
+
+      //Set the params.//
+      $fromLanguage = 'en';
+      $contentType  = 'text/plain';
+      $category     = 'general';
+
+      $from = 'en';
+
+      list($lid, $untranslated_string) = bing_translate_find_untranslated_string();
+      if($untranslated_string!==false){
+        foreach(_bing_translate_get_supported_languages() as $to => $name){
+          //echo "Translating {$untranslated_string} {$from} => {$to} <br/>";
+          $params = "text=".urlencode($untranslated_string)."&to=".$to."&from=".$from;
+          $translateUrl = "http://api.microsofttranslator.com/v2/Http.svc/Translate?$params";
+          //echo "URL: {$translateUrl}<br />";
+          //Create the Translator Object.
+          $translatorObj = new HTTPTranslator();
+
+          //Get the curlResponse.
+          $curlResponse = $translatorObj->curlRequest($translateUrl, $authHeader);
+          //echo "Curl response";
+          //echo $curlResponse;
+          //echo "<br />";
+
+          //Interprets a string of XML into an object.
+          $xmlObj = simplexml_load_string($curlResponse);
+          foreach((array)$xmlObj[0] as $val){
+            $translatedStr = $val;
+          }
+          //echo "Output: \"$translatedStr\" <br/>";
+
+          db_merge('locales_target')
+            ->key(array(
+              'lid' => $lid,
+              'language' => $to
+            ))
+            ->fields(array(
+              'translation' => $translatedStr,
+              'plid' => 0,
+              'plural' => 0
+            ))
+            ->execute();
+        }
+      }
+
+    } catch (Exception $e) {
+      echo "Exception: " . $e->getMessage() . PHP_EOL;
+    }
+  }
+}
+
+function bing_translate_get_default_language(){
+  return 'en'; // /r/inglin would be proud.
+}
+
+function bing_translate_find_untranslated_string(){
+  $untranslated_string = false;
+  $untranslated_string_query = db_query("
+        SELECT
+          ls.lid as source_lid,
+          lt.lid as target_lid,
+          ls.source as source_text
+        FROM locales_source ls
+        LEFT JOIN locales_target lt
+          ON lt.lid = ls.lid
+        WHERE lt.lid IS NULL
+        ORDER BY rand()
+        LIMIT 1"
+  );
+
+  foreach($untranslated_string_query as $untranslated_string_query_result){
+    $untranslated_string = $untranslated_string_query_result->source_text;
+    $lid = $untranslated_string_query_result->source_lid;
+  }
+
+  if($untranslated_string){
+    return array($lid, $untranslated_string);
+  }else{
+    return false;
+  }
+}
+
+function _bing_translate_get_supported_languages(){
+  $supported_languages = array();
+  $supported_languages_query = db_select('languages','l')
+    ->fields('l', array('language', 'name', 'native'))
+    ->condition('enabled', 1)
+    ->condition('language','en','!=')
+    ->orderBy('weight')
+    ->execute();
+  foreach($supported_languages_query as $supported_language){
+    $supported_languages[$supported_language->language] = "{$supported_language->name} ({$supported_language->native})";
+  }
+  return $supported_languages;
+}
+
+/**
+ * Administrative settings form.
+ */
+function bing_translate_admin_settings() {
+
+  $form['bing_language_list'] = array(
+    '#type'           => 'select',
+    '#multiple'       => true,
+    '#required'       => FALSE,
+    '#default_value'  => variable_get('bing_language_list', ''),
+    '#title'          => t('Languages to support'),
+    '#options'        => _bing_translate_get_supported_languages(),
+    '#description'    => t("Select which Languages you want to support"),
+  );
+
+  // Add an additional submit handler to clear the cache after list is updated.
+  $full_form = system_settings_form($form);
+  $full_form['#submit'][] = 'cacheexclude_admin_settings_submit';
+
+  return $full_form;
+}
+
+/**
+ * Clear the cache when the admin settings form is submitted.
+ */
+function bing_translate_admin_settings_submit() {
+}

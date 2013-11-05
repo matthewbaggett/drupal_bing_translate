@@ -1,0 +1,6 @@
+name = Bing Translate
+description = Use the Bing Translate API to automatically generate a translation of your site
+package = Other
+core = 7.x
+
+
