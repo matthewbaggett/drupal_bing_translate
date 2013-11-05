@@ -23,72 +23,66 @@ function bing_translate_cron(){
   require_once('vendor/microsoft/translator.php');
   //ACCOUNT_KEY you have to get from https://datamarket.azure.com/dataset/1899a118-d202-492c-aa16-ba21c33c06cb
 
-  for($i = 1; $i <= variable_get('bing_translate_translations_per_call', 10); $i++){
-    try {
-      //Client ID of the application.
-      $clientID       = variable_get('AZURE_SECRET','Sitely');
-      //Client Secret key of the application.
-      $clientSecret = variable_get('AZURE_SECRET','YJ0nM8fO3W+ivcSIaqmZmBt47iEsf5P9QY583KKenfk=');
-      //OAuth Url.
-      $authUrl      = "https://datamarket.accesscontrol.windows.net/v2/OAuth2-13/";
-      //Application Scope Url
-      $scopeUrl     = "http://api.microsofttranslator.com";
-      //Application grant type
-      $grantType    = "client_credentials";
+  for($i = 1; $i <= variable_get('bing_translate_translations_per_call', 100); $i++){
+    //Client ID of the application.
+    $clientID       = variable_get('AZURE_SECRET','Sitely');
+    //Client Secret key of the application.
+    $clientSecret = variable_get('AZURE_SECRET','YJ0nM8fO3W+ivcSIaqmZmBt47iEsf5P9QY583KKenfk=');
+    //OAuth Url.
+    $authUrl      = "https://datamarket.accesscontrol.windows.net/v2/OAuth2-13/";
+    //Application Scope Url
+    $scopeUrl     = "http://api.microsofttranslator.com";
+    //Application grant type
+    $grantType    = "client_credentials";
 
-      //Create the AccessTokenAuthentication object.
-      $authObj      = new AccessTokenAuthentication();
-      //Get the Access token.
-      $accessToken  = $authObj->getTokens($grantType, $scopeUrl, $clientID, $clientSecret, $authUrl);
-      //Create the authorization Header string.
-      $authHeader = "Authorization: Bearer ". $accessToken;
+    //Create the AccessTokenAuthentication object.
+    $authObj      = new AccessTokenAuthentication();
+    //Get the Access token.
+    $accessToken  = $authObj->getTokens($grantType, $scopeUrl, $clientID, $clientSecret, $authUrl);
+    //Create the authorization Header string.
+    $authHeader = "Authorization: Bearer ". $accessToken;
 
-      //Set the params.//
-      $fromLanguage = 'en';
-      $contentType  = 'text/plain';
-      $category     = 'general';
+    $from = 'en';
 
-      $from = 'en';
+    list($lid, $untranslated_string) = bing_translate_find_untranslated_string();
 
-      list($lid, $untranslated_string) = bing_translate_find_untranslated_string();
-      if($untranslated_string!==false){
-        foreach(_bing_translate_get_supported_languages() as $to => $name){
-          //echo "Translating {$untranslated_string} {$from} => {$to} <br/>";
-          $params = "text=".urlencode($untranslated_string)."&to=".$to."&from=".$from;
-          $translateUrl = "http://api.microsofttranslator.com/v2/Http.svc/Translate?$params";
-          //echo "URL: {$translateUrl}<br />";
-          //Create the Translator Object.
-          $translatorObj = new HTTPTranslator();
+    if($untranslated_string === null){
+      break;
+    }else{
+      foreach(_bing_translate_get_supported_languages() as $to => $name){
+        //echo "Translating {$untranslated_string} {$from} => {$to} <br/>";
+        $params = "text=".urlencode($untranslated_string)."&to=".$to."&from=".$from;
+        $translateUrl = "http://api.microsofttranslator.com/v2/Http.svc/Translate?$params";
+        //echo "URL: {$translateUrl}<br />";
+        //Create the Translator Object.
+        $translatorObj = new HTTPTranslator();
 
-          //Get the curlResponse.
-          $curlResponse = $translatorObj->curlRequest($translateUrl, $authHeader);
-          //echo "Curl response";
-          //echo $curlResponse;
-          //echo "<br />";
+        //Get the curlResponse.
+        $curlResponse = $translatorObj->curlRequest($translateUrl, $authHeader);
+        //echo "Curl response";
+        //echo $curlResponse;
+        //echo "<br />";
 
-          //Interprets a string of XML into an object.
-          $xmlObj = simplexml_load_string($curlResponse);
-          foreach((array)$xmlObj[0] as $val){
-            $translatedStr = $val;
-          }
-          //echo "Output: \"$translatedStr\" <br/>";
-
-          db_merge('locales_target')
-            ->key(array(
-              'lid' => $lid,
-              'language' => $to
-            ))
-            ->fields(array(
-              'translation' => $translatedStr,
-              'plid' => 0,
-              'plural' => 0
-            ))
-            ->execute();
+        //Interprets a string of XML into an object.
+        $xmlObj = simplexml_load_string($curlResponse);
+        $translatedStr = '???';
+        foreach((array)$xmlObj[0] as $val){
+          $translatedStr = $val;
         }
-      }
+        //echo "Output: \"$translatedStr\" <br/>";
 
-    } catch (Exception $e) {
-      echo "Exception: " . $e->getMessage() . PHP_EOL;
+        db_merge('locales_target')
+          ->key(array(
+            'lid' => $lid,
+            'language' => $to
+          ))
+          ->fields(array(
+            'translation' => $translatedStr,
+            'plid' => 0,
+            'plural' => 0
+          ))
+          ->execute();
+      }
     }
   }
 }
